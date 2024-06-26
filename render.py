@@ -9,6 +9,7 @@
 # For inquiries contact  george.drettakis@inria.fr
 #
 
+import ast
 import torch
 from scene import Scene
 import os
@@ -24,6 +25,18 @@ from utils.mesh_utils import GaussianExtractor, to_cam_open3d, post_process_mesh
 from utils.render_utils import generate_path, create_videos
 
 import open3d as o3d
+
+def validate_cams(lists_of_numbers, length):
+    if not isinstance(lists_of_numbers, list):
+        raise ValueError("Input is not a list.")
+    for sublist in lists_of_numbers:
+        if not isinstance(sublist, list):
+            raise ValueError("Sublist is not a list.")
+        if len(sublist) != length:
+            raise ValueError(f"Sublist {sublist} does not have the required length of {length}.")
+        for num in sublist:
+            if not isinstance(num, (int, float)):
+                raise ValueError(f"Element {num} in sublist {sublist} is not a number.")
 
 if __name__ == "__main__":
     # Set up command line argument parser
@@ -42,8 +55,23 @@ if __name__ == "__main__":
     parser.add_argument("--num_cluster", default=50, type=int, help='Mesh: number of connected clusters to export')
     parser.add_argument("--unbounded", action="store_true", help='Mesh: using unbounded mode for meshing')
     parser.add_argument("--mesh_res", default=1024, type=int, help='Mesh: resolution for unbounded mesh extraction')
+
+    parser.add_argument(
+        '--new_cams',
+        type=str,
+        default=None,
+        help="A list of lists of numbers, e.g. '[[1,2,3], [3,4,5]]'"
+    )
+
     args = get_combined_args(parser)
     print("Rendering " + args.model_path)
+
+    new_cams = ast.literal_eval(args.new_cams)
+    try:
+        validate_cams(new_cams, 16)
+        print("Validated list of lists:", new_cams)
+    except ValueError as e:
+        print("Validation Error:", e)
 
 
     dataset, iteration, pipe = model.extract(args), args.iteration, pipeline.extract(args)
@@ -59,8 +87,8 @@ if __name__ == "__main__":
     if not args.skip_train:
         print("export training images ...")
         os.makedirs(train_dir, exist_ok=True)
-        gaussExtractor.reconstruction(scene.getTrainCameras())
-        gaussExtractor.export_image(train_dir)
+        gaussExtractor.reconstruction(scene.getTrainCameras(), new_cams=new_cams)
+        gaussExtractor.export_image(train_dir, new_cams=new_cams)
         
     
     if (not args.skip_test) and (len(scene.getTestCameras()) > 0):

@@ -8,7 +8,7 @@
 #
 # For inquiries contact  huangbb@shanghaitech.edu.cn
 #
-
+import copy
 import torch
 import numpy as np
 import os
@@ -18,6 +18,16 @@ from utils.render_utils import save_img_f32, save_img_u8
 from functools import partial
 import open3d as o3d
 import trimesh
+
+def process_viewer_cam(sample_cam, new_pose):
+    assert len(new_pose) == 16, "new input camera pose has to be length 16"
+    rot_3x4 = np.array(new_pose[:12]).reshape(3, 4)
+    rot_3x3 = rot_3x4[:, :-1]
+    trans = new_pose[-4:-1]
+    new_cam = copy.deepcopy(sample_cam)
+    new_cam.R = rot_3x3
+    new_cam.T = trans
+    return new_cam
 
 def post_process_mesh(mesh, cluster_to_keep=1000):
     """
@@ -90,14 +100,14 @@ class GaussianExtractor(object):
     @torch.no_grad()
     def clean(self):
         self.depthmaps = []
-        # self.alphamaps = []
+        self.alphamaps = []
         self.rgbmaps = []
-        # self.normals = []
-        # self.depth_normals = []
+        self.normals = []
+        self.depth_normals = []
         self.viewpoint_stack = []
 
     @torch.no_grad()
-    def reconstruction(self, viewpoint_stack):
+    def reconstruction(self, viewpoint_stack, new_cams=None):
         """
         reconstruct radiance field given cameras
         """
@@ -112,14 +122,29 @@ class GaussianExtractor(object):
             depth_normal = render_pkg['surf_normal']
             self.rgbmaps.append(rgb.cpu())
             self.depthmaps.append(depth.cpu())
-            # self.alphamaps.append(alpha.cpu())
-            # self.normals.append(normal.cpu())
-            # self.depth_normals.append(depth_normal.cpu())
+            self.alphamaps.append(alpha.cpu())
+            self.normals.append(normal.cpu())
+            self.depth_normals.append(depth_normal.cpu())
+        
+        if new_cams is not None:
+            self.new_rgbmaps = []
+            self.new_depthmaps = []
+            for i, new_cam_pose in tqdm(enumerate(new_cams), desc="reconstruct for new cameras"):
+                new_cam = process_viewer_cam(self.viewpoint_stack[0], new_cam_pose)
+                render_pkg = self.render(new_cam, self.gaussians)
+                rgb = render_pkg['render']
+                depth = render_pkg['surf_depth']
+                self.new_rgbmaps.append(rgb.cpu())
+                self.new_depthmaps.append(depth.cpu())
+
+            self.new_rgbmaps = torch.stack(self.new_rgbmaps, dim=0)
+            self.new_depthmaps = torch.stack(self.new_depthmaps, dim=0)
         
         self.rgbmaps = torch.stack(self.rgbmaps, dim=0)
         self.depthmaps = torch.stack(self.depthmaps, dim=0)
-        # self.alphamaps = torch.stack(self.alphamaps, dim=0)
-        # self.depth_normals = torch.stack(self.depth_normals, dim=0)
+        self.normals = torch.stack(self.normals, dim=0)
+        self.alphamaps = torch.stack(self.alphamaps, dim=0)
+        self.depth_normals = torch.stack(self.depth_normals, dim=0)
         self.estimate_bounding_sphere()
 
     def estimate_bounding_sphere(self):
@@ -279,7 +304,7 @@ class GaussianExtractor(object):
         return mesh
 
     @torch.no_grad()
-    def export_image(self, path):
+    def export_image(self, path, new_cams=None):
         render_path = os.path.join(path, "renders")
         gts_path = os.path.join(path, "gt")
         vis_path = os.path.join(path, "vis")
@@ -291,5 +316,10 @@ class GaussianExtractor(object):
             save_img_u8(gt.permute(1,2,0).cpu().numpy(), os.path.join(gts_path, '{0:05d}'.format(idx) + ".png"))
             save_img_u8(self.rgbmaps[idx].permute(1,2,0).cpu().numpy(), os.path.join(render_path, '{0:05d}'.format(idx) + ".png"))
             save_img_f32(self.depthmaps[idx][0].cpu().numpy(), os.path.join(vis_path, 'depth_{0:05d}'.format(idx) + ".tiff"))
-            # save_img_u8(self.normals[idx].permute(1,2,0).cpu().numpy() * 0.5 + 0.5, os.path.join(vis_path, 'normal_{0:05d}'.format(idx) + ".png"))
-            # save_img_u8(self.depth_normals[idx].permute(1,2,0).cpu().numpy() * 0.5 + 0.5, os.path.join(vis_path, 'depth_normal_{0:05d}'.format(idx) + ".png"))
+            save_img_u8(self.normals[idx].permute(1,2,0).cpu().numpy() * 0.5 + 0.5, os.path.join(vis_path, 'normal_{0:05d}'.format(idx) + ".png"))
+            save_img_u8(self.depth_normals[idx].permute(1,2,0).cpu().numpy() * 0.5 + 0.5, os.path.join(vis_path, 'depth_normal_{0:05d}'.format(idx) + ".png"))
+        
+        if new_cams is not None:
+            for idx, new_cam_pose in tqdm(enumerate(new_cams), desc="export new images"):
+                save_img_u8(self.new_rgbmaps[idx].permute(1,2,0).cpu().numpy(), os.path.join(render_path, f"new_{str(idx)}.png"))
+
