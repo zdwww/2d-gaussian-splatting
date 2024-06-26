@@ -131,6 +131,7 @@ class GaussianExtractor(object):
             self.new_depthmaps = []
             for i, new_cam_pose in tqdm(enumerate(new_cams), desc="reconstruct for new cameras"):
                 new_cam = process_viewer_cam(self.viewpoint_stack[0], new_cam_pose)
+                new_cam.reprocess_cam()
                 render_pkg = self.render(new_cam, self.gaussians)
                 rgb = render_pkg['render']
                 depth = render_pkg['surf_depth']
