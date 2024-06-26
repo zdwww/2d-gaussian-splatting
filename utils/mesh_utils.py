@@ -129,17 +129,21 @@ class GaussianExtractor(object):
         if new_cams is not None:
             self.new_rgbmaps = []
             self.new_depthmaps = []
+            self.new_depth_normals = []
             for i, new_cam_pose in tqdm(enumerate(new_cams), desc="reconstruct for new cameras"):
                 new_cam = process_viewer_cam(self.viewpoint_stack[0], new_cam_pose)
                 new_cam.reprocess_cam()
                 render_pkg = self.render(new_cam, self.gaussians)
                 rgb = render_pkg['render']
                 depth = render_pkg['surf_depth']
+                depth_normal = render_pkg['surf_normal']
                 self.new_rgbmaps.append(rgb.cpu())
                 self.new_depthmaps.append(depth.cpu())
+                self.new_depth_normals.append(depth_normal.cpu())
 
             self.new_rgbmaps = torch.stack(self.new_rgbmaps, dim=0)
             self.new_depthmaps = torch.stack(self.new_depthmaps, dim=0)
+            self.new_depth_normals = torch.stack(self.new_depth_normals, dim=0)
         
         self.rgbmaps = torch.stack(self.rgbmaps, dim=0)
         self.depthmaps = torch.stack(self.depthmaps, dim=0)
@@ -323,4 +327,5 @@ class GaussianExtractor(object):
         if new_cams is not None:
             for idx, new_cam_pose in tqdm(enumerate(new_cams), desc="export new images"):
                 save_img_u8(self.new_rgbmaps[idx].permute(1,2,0).cpu().numpy(), os.path.join(render_path, f"new_{str(idx)}.png"))
+                save_img_u8(self.new_depth_normals[idx].permute(1,2,0).cpu().numpy() * 0.5 + 0.5, os.path.join(vis_path, f"new_depth_normal_{str(idx)}.png"))
 
